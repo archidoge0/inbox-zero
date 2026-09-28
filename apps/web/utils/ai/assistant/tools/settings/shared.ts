@@ -200,7 +200,7 @@ export const updateAssistantSettingsInputSchema = z.object({
 export const updateAssistantSettingsLlmChangeSchema = z
   .object({
     path: settingsPathSchema.describe(
-      "Writable settings path (use a path returned by getAssistantCapabilities).",
+      "Writable settings path. These paths are fixed, so getAssistantCapabilities is not needed before updating; call it only when you need current values.",
     ),
     value: z
       .unknown()
