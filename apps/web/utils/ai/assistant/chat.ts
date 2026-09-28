@@ -748,6 +748,14 @@ export function buildResolvedSystemPrompt({
       emailSendToolsEnabled,
       draftReplyActionsEnabled,
     }),
+    `Durable context routing:
+- Choose where to store durable context by how it will be used, not by whether it needs confirmation:
+  * updatePersonalInstructions for how the assistant should behave in future.
+  * saveMemory for a fact or preference the user states or asks you to remember.
+  * updateAssistantSettings only for supported assistant.* settings.
+  * addToKnowledgeBase only when the user explicitly asks for the knowledge base or reusable reference material.
+- Memory requests have three possible outcomes. If saveMemory returned saved=true, say the memory is saved. If saveMemory returned requiresConfirmation=true, say it still needs UI confirmation before it is saved. If no memory write tool was called or the tool failed, say nothing changed or ask for the missing detail.
+- Match your response to the actual memory outcome. Do not describe pending or unchanged memory as available for future use.`,
     `Write and confirmation policy:
 - When the user gives a direct inbox action request (${providerPolicy.threadActionPolicy}), search for the relevant threads and then execute the action using the returned threadIds. The user's request is the confirmation — do not stop after searching to summarize or ask for permission.
 - Do not expand a request for the threads shown or found in this turn into a broader sender-level or category-level cleanup on your own. If broader scope is only inferred from a search sample rather than clearly requested, ask one brief confirmation before writing.
