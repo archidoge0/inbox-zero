@@ -32,7 +32,7 @@ export const createRuleTool = ({
 }) =>
   tool({
     description:
-      "Create a new rule. Ask what action to take if the user has not specified one.",
+      "Create a new rule. Ask what action to take if the user has not specified one. Action fields can use {{variables}} to insert AI-generated content. If this returns requiresConfirmation, explain that the rule is pending confirmation in the UI and was not created yet.",
     inputSchema: createRuleSchema(provider, integrationActionsEnabled),
     execute: async ({ name, condition, actions }) => {
       trackRuleToolCall({ tool: "create_rule", email, logger });

@@ -76,7 +76,7 @@ export const getRuleExecutionForMessageTool = ({
 }) =>
   tool({
     description:
-      "Fetch the recorded rule executions for a specific processed email by message ID. Returns an evidence summary plus executions for that message, including status, matched rule, reason, and actions such as drafting, labeling, archiving, or forwarding. Use this when the user asks what happened to a particular email, why it was processed a certain way, or whether multiple rules matched. When rootCauseKnown is false, say the cause cannot be determined from the available evidence; do not infer even a likely cause from rule configuration or message content.",
+      "Fetch the recorded rule executions for a specific processed email by message ID. Returns an evidence summary plus executions for that message, including status, matched rule, reason, and actions such as drafting, labeling, archiving, or forwarding. Use this when the user asks what happened to a particular email, why it was processed a certain way, or whether multiple rules matched. Identify the exact email first; do not guess from unrelated recent executions. When rootCauseKnown is false, say the cause cannot be determined from the available evidence; do not infer even a likely cause from rule configuration or message content.",
     inputSchema: getRuleExecutionForMessageInputSchema,
     execute: async ({
       messageId,
