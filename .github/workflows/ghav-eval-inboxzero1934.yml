@@ -55,6 +55,24 @@ jobs:
           git checkout --detach FETCH_HEAD
           test "$(git rev-parse HEAD)" = "b543b8f0f2f5aa7125cb04f72a99dc2d74951088"
 
+      - name: Synchronize full smoke test after role submission
+        shell: bash
+        run: |
+          python3 - <<'PYCODE'
+          from pathlib import Path
+          from hashlib import sha256
+          path = Path('apps/web/__tests__/playwright/local-bypass-smoke.spec.ts')
+          source = path.read_text()
+          assert sha256(source.encode()).hexdigest() == 'ea0a8b9e89ff62c101bdfbe6d448a224fc89604be15371c5913429109b038416'
+          old = '      await clickIfVisible(\n        page,\n        page.getByRole("button", { name: /^Continue\\b/ }),\n        5000,\n      );\n      continue;'
+          new = '      if (\n        await clickIfVisible(\n          page,\n          page.getByRole("button", { name: /^Continue\\b/ }),\n          5000,\n        )\n      ) {\n        await waitForOnboardingUpdate(page, currentUrl, 60_000);\n      }\n      continue;'
+          assert source.count(old) == 1
+          revised = source.replace(old, new)
+          assert sha256(revised.encode()).hexdigest() == '093f48eaab69f0ac0e06b7aa0613e1dd7cbd0fb905e416631486e6c77eaf325a'
+          path.write_text(revised)
+          print('GHAV_SMOKE_TEST_SHA256=093f48eaab69f0ac0e06b7aa0613e1dd7cbd0fb905e416631486e6c77eaf325a')
+          PYCODE
+
       - name: Setup pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
 
@@ -87,8 +105,8 @@ jobs:
           echo "::warning::Run this workflow manually (workflow_dispatch) to collect artifacts."
 
       - name: Upload smoke artifacts
-        if: ${{ always() && github.event_name == 'workflow_dispatch' }}
-        uses: actions/upload-artifact@v4
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: local-bypass-smoke-artifacts-${{ github.run_id }}
           path: |
