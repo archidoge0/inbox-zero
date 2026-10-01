@@ -87,8 +87,8 @@ jobs:
           echo "::warning::Run this workflow manually (workflow_dispatch) to collect artifacts."
 
       - name: Upload smoke artifacts
-        if: ${{ always() && github.event_name == 'workflow_dispatch' }}
-        uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: local-bypass-smoke-artifacts-${{ github.run_id }}
           path: |
