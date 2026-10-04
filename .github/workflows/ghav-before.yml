@@ -1,0 +1,248 @@
+name: "ghav before: Playwright"
+"on":
+  push:
+    branches:
+      - ghav/dev/3546
+    paths:
+      - .ghav/before
+permissions:
+  contents: read
+jobs:
+  playwright:
+    name: E2E shard ${{ matrix.shard }}/4
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - 1
+          - 2
+          - 3
+          - 4
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: --health-cmd "pg_isready -U postgres -d postgres" --health-interval 10s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7
+        options: --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 10
+      redis-http:
+        image: hiett/serverless-redis-http@sha256:5b0bb9239fce53abf87b2018a7a0deb9ec7bd900c5360738fe5fbeeb426f9150
+        env:
+          SRH_CONNECTION_STRING: redis://redis:6379
+          SRH_MODE: env
+          SRH_TOKEN: playwright-token
+        ports:
+          - 8079:80
+    env:
+      PLAYWRIGHT_SHARD: ${{ matrix.shard }}/4
+      NODE_ENV: development
+      NODE_OPTIONS: --max_old_space_size=6144
+      NEXT_PUBLIC_BASE_URL: http://localhost:3000
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      AUTH_SECRET: secret
+      GOOGLE_CLIENT_ID: client_id
+      GOOGLE_CLIENT_SECRET: client_secret
+      GOOGLE_BASE_URL: http://localhost:4100
+      GOOGLE_PUBSUB_TOPIC_NAME: topic
+      EMAIL_ENCRYPT_SECRET: secret
+      EMAIL_ENCRYPT_SALT: salt
+      INTERNAL_API_KEY: secret
+      DEFAULT_LLMS: openai:gpt-5.4-mini
+      UPSTASH_REDIS_URL: http://localhost:8079
+      UPSTASH_REDIS_TOKEN: playwright-token
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Find changed files
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+
+          changed_files_path="$RUNNER_TEMP/changed-files.txt"
+          changed_test_files_path="$RUNNER_TEMP/changed-playwright-files.txt"
+          : > "$changed_files_path"
+          : > "$changed_test_files_path"
+
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]] &&
+            [[ -n "$BASE_SHA" ]] &&
+            [[ "$BASE_SHA" != "0000000000000000000000000000000000000000" ]]; then
+            git fetch --no-tags --depth=1 origin "$BASE_SHA"
+            git diff --name-only --diff-filter=ACMRD "$BASE_SHA" "$GITHUB_SHA" \
+              > "$changed_files_path"
+            grep '^apps/web/__tests__/playwright/' "$changed_files_path" | \
+              sed 's#^apps/web/##' > "$changed_test_files_path" || true
+          fi
+
+          delimiter="PLAYWRIGHT_FILES_$(openssl rand -hex 16)"
+          {
+            echo "PLAYWRIGHT_CHANGED_FILES<<$delimiter"
+            cat "$changed_files_path"
+            echo "$delimiter"
+            echo "PLAYWRIGHT_CHANGED_TEST_FILES<<$delimiter"
+            cat "$changed_test_files_path"
+            echo "$delimiter"
+          } >> "$GITHUB_ENV"
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+      - name: Install dependencies
+        run: bash scripts/pnpm-install-without-desktop.sh --frozen-lockfile
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      - name: Setup Playwright cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+      - name: Apply database migrations
+        run: pnpm -F inbox-zero-ai exec prisma migrate deploy
+      - name: Install Playwright browser
+        run: pnpm -F inbox-zero-ai exec playwright install --with-deps chromium
+      - name: Run Playwright tests
+        id: playwright_tests
+        run: pnpm -F inbox-zero-ai test:playwright:emulated
+      - name: Upload Playwright artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-shard-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.shard }}
+          path: |
+            apps/web/.tmp/playwright/blob-report
+            apps/web/test-results
+          include-hidden-files: true
+          compression-level: 1
+          retention-days: 7
+          if-no-files-found: warn
+  report:
+    name: Web E2E
+    needs: playwright
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+      - name: Install dependencies
+        run: bash scripts/pnpm-install-without-desktop.sh --frozen-lockfile
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      - name: Download shard reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: playwright-shard-${{ github.run_id }}-${{ github.run_attempt }}-*
+          path: apps/web
+          merge-multiple: true
+      - name: Merge browser reports
+        shell: bash
+        run: |
+          if compgen -G 'apps/web/.tmp/playwright/blob-report/*.zip' > /dev/null; then
+            pnpm -F inbox-zero-ai exec playwright merge-reports --reporter=html .tmp/playwright/blob-report
+          else
+            echo "No browser targets were selected."
+          fi
+        env:
+          PLAYWRIGHT_HTML_OPEN: never
+      - name: Upload Playwright artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            apps/web/playwright-report
+            apps/web/test-results
+          compression-level: 1
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Require every shard to pass
+        if: always()
+        env:
+          SHARD_RESULT: ${{ needs.playwright.result }}
+        run: test "$SHARD_RESULT" = success
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+      - uses: actions/cache@v4
+        name: Setup pnpm cache
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - name: Run lint check
+        run: pnpm check
+      - name: Check structural conventions
+        run: pnpm konsistent
+      - name: Check Prisma enum imports
+        run: pnpm -F inbox-zero-ai check-enums
+      - name: Check server action exports
+        run: pnpm -F inbox-zero-ai check-server-actions
+      - name: Check client redirects
+        run: pnpm -F inbox-zero-ai check-client-redirects
+      - name: Check test fixture hygiene
+        run: pnpm -F inbox-zero-ai check-test-fixtures
+      - name: Run tests
+        run: pnpm -F inbox-zero-ai test
+        env:
+          RUN_AI_TESTS: false
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+          AUTH_SECRET: secret
+          GOOGLE_CLIENT_ID: client_id
+          GOOGLE_CLIENT_SECRET: client_secret
+          MICROSOFT_CLIENT_ID: client_id
+          MICROSOFT_CLIENT_SECRET: client_secret
+          GOOGLE_PUBSUB_TOPIC_NAME: topic
+          EMAIL_ENCRYPT_SECRET: secret
+          EMAIL_ENCRYPT_SALT: salt
+          INTERNAL_API_KEY: secret
+          NEXT_PUBLIC_BASE_URL: http://localhost:3000
+      - name: Run package tests
+        run: pnpm test:packages
+      - name: Run integration tests
+        run: pnpm -F inbox-zero-ai test-integration
+        env:
+          RUN_INTEGRATION_TESTS: true
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+          AUTH_SECRET: secret
+          GOOGLE_CLIENT_ID: client_id
+          GOOGLE_CLIENT_SECRET: client_secret
+          MICROSOFT_CLIENT_ID: client_id
+          MICROSOFT_CLIENT_SECRET: client_secret
+          GOOGLE_PUBSUB_TOPIC_NAME: topic
+          EMAIL_ENCRYPT_SECRET: secret
+          EMAIL_ENCRYPT_SALT: salt
+          INTERNAL_API_KEY: secret
+          NEXT_PUBLIC_BASE_URL: http://localhost:3000
